@@ -1,0 +1,1 @@
+AMD_SERIALIZE_KERNEL=3 TRITON_HIP_ASYNC_COPY_BYPASS_PERMUTE=1 AMDGCN_USE_BUFFER_OPS=1 TRITON_HIP_ASYNC_FAST_SWIZZLE=1 TRITON_HIP_USE_ASYNC_COPY=1 TRITON_HIP_USE_BLOCK_PINGPONG=1 rocprofv3 --pmc SQ_INSTS_LDS SQ_LDS_BANK_CONFLICT --output-format csv --output-file lds_conflict -d out --  python ~/nod/mmperf_gpu/benchmark_mm_f16.py --shape $0 $1 $2 --backend $3
