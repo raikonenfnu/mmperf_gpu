@@ -27,7 +27,7 @@ from wave_lang.kernel.wave.constraints import (
     MMAType,
 )
 from wave_lang.kernel.wave.templates.reordered_gemm import get_reordered_matmul
-
+from aiter import hipb_mm, hipb_create_extension
 
 def get_wave_gemm(shape, c_dtype, use_async=False):
     # Workgroup tile sizes
@@ -54,6 +54,24 @@ def get_wave_gemm(shape, c_dtype, use_async=False):
     options = set_default_run_config(options)
     gemm = wave_compile(options, reordered_gemm)
     return gemm
+
+def get_hipb_gemm(inp, weights, dtype):
+    return hipb_mm(
+        inp,
+        weights.t(),
+        solution_index=0,
+        bias=None,
+        out_dtype=dtype,
+        scaleA=None,
+        scaleB=None,
+        scaleOut=None,
+        bpreshuffle=False,
+    )
+
+def get_asm_gemm(
+    x, weight, asm_out, bias=None, splitK=None, kernelName=None
+):
+    return aiter.gemm_a16w16_asm(x, weight, asm_out, bias, splitK, kernelName)
 
 
 def run_benchmark(args):
@@ -122,22 +140,21 @@ def run_benchmark(args):
         elif args.backend == "triton":
             triton_out = torch.empty(M, N, device="cuda", dtype=c_dtype)
             ms = triton.testing.do_bench(
-                lambda: gemm_a16w16(x, w, None, out_dtype, y, activation=activation),
+                lambda: gemm_a16w16(x, w, None, c_dtype, triton_out, activation=None),
                 warmup=25,
                 rep=100,
             )
-        elif args.backend == "ck":
-            ck_out = torch.empty((M + 255) // 256 * 256, N, device="cuda", dtype=c_dtype)
+        elif args.backend == "hipblas":
+            hipb_create_extension()
             ms = triton.testing.do_bench(
-                lambda: aiter.gemm_a4w4_blockscale(x, w, x_scales_shuffle, w_scales_shuffle, ck_out),
+                lambda: get_hipb_gemm(x, w, dtype=torch.bfloat16),
                 warmup=25,
                 rep=100,
             )
         elif args.backend == "asm":
-            asm_out = torch.empty((M + 255) // 256 * 256, N, device="cuda", dtype=c_dtype)
-            bias = torch.zeros(M, N, dtype=c_dtype)
+            asm_out = torch.empty(M, N, device=x.device, dtype=torch.float32)
             ms = triton.testing.do_bench(
-                lambda: aiter.gemm_a4w4_asm(x, w, x_scales_shuffle, w_scales_shuffle, asm_out, bias, bpreshuffle=False),
+                lambda: get_asm_gemm(x, w, asm_out),
                 warmup=25,
                 rep=100,
             )
@@ -192,7 +209,7 @@ def parse_args():
     parser.add_argument(
         "--backend",
         type=str,
-        choices=["triton", "wave", "ck", "asm", "wave_async"],
+        choices=["triton", "wave", "hipblas", "wave_async", "asm"],
         default="triton",
         help="backend to run gemm",
     )
