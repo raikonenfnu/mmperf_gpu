@@ -22,35 +22,51 @@ from wave_lang.kernel.wave.utils.run_utils import (
 from wave_lang.kernel.lang.global_symbols import *
 from wave_lang.kernel.wave.utils.general_utils import (
     torch_dtype_to_wave,
+    get_default_scheduling_params,
 )
 from wave_lang.kernel.wave.constraints import (
     MMAType,
 )
 from wave_lang.kernel.wave.templates.reordered_gemm import get_reordered_matmul
 from aiter import hipb_mm, hipb_create_extension
+from typing import Sequence
+from torch.testing import assert_close
 
 def get_wave_gemm(shape, c_dtype, use_async=False):
     # Workgroup tile sizes
     BLOCK_M = 128
-    BLOCK_N = 256
+    BLOCK_N = 128
     BLOCK_K = 64
     # Group size
     GROUP_SIZE_M = 16
-    mfma_variant = MMAType.F32_16x16x16_F16
+    mfma_variant = MMAType.F32_16x16x32_F16
     reordered_gemm, hyperparams = get_reordered_matmul(
         shape[0], shape[1], shape[2], BLOCK_M, BLOCK_N, BLOCK_K, GROUP_SIZE_M, mfma_variant
     )
     schedule = SchedulingType.PREFETCH
+    UNROLL_FACTOR = tkl.sym.UNROLL_FACTOR
+    multi_buffer_count = 2
+    hyperparams[UNROLL_FACTOR] = multi_buffer_count
     options = WaveCompileOptions(
         subs=hyperparams,
         canonicalize=True,
         schedule=schedule,
-        wave_runtime=True,
+        wave_runtime=False,
         dump_intermediates="./inter",
         use_buffer_ops=True,
         use_global_to_shared=use_async,
+        multi_buffer_count=multi_buffer_count,
         minimize_shared_allocs=False,
     )
+    options.postprocess = """
+    module attributes {transform.with_named_sequence} {
+        transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+            %0 = transform.structured.match ops{["scf.for"]} in %arg0 : (!transform.any_op) -> !transform.any_op
+            transform.loop.unroll %0 { factor = %%UNROLL_FACTOR%% } : !transform.any_op
+            transform.yield
+        }
+    }
+    """
     options = set_default_run_config(options)
     gemm = wave_compile(options, reordered_gemm)
     return gemm
@@ -121,6 +137,7 @@ def run_benchmark(args):
 
         if args.backend == "wave":
             wave_shape = (M, N, K)
+            # gemm = get_wave_gemm(wave_shape, c_dtype, use_async=False)
             gemm = get_wave_gemm(wave_shape, c_dtype, use_async=False)
             wave_out = torch.empty(M, N, device=x.device, dtype=torch.float32)
             ms = triton.testing.do_bench(
@@ -128,15 +145,19 @@ def run_benchmark(args):
                 warmup=25,
                 rep=100,
             )
+            ref = torch.matmul(x.to(torch.float32), w.T.to(torch.float32))
+            assert_close(ref, wave_out, atol=0.004, rtol=0.004)
         elif args.backend == "wave_async":
             wave_shape = (M, N, K)
             gemm = get_wave_gemm(wave_shape, c_dtype, use_async=True)
-            wave_out = torch.empty(M, N, device=x.device, dtype=c_dtype)
+            wave_out = torch.empty(M, N, device=x.device, dtype=torch.float32)
             ms = triton.testing.do_bench(
                 lambda: gemm(x, w, wave_out),
                 warmup=25,
                 rep=100,
             )
+            ref = torch.matmul(x.to(torch.float32), w.T.to(torch.float32))
+            assert_close(ref, wave_out, atol=0.004, rtol=0.004)
         elif args.backend == "triton":
             triton_out = torch.empty(M, N, device="cuda", dtype=c_dtype)
             ms = triton.testing.do_bench(
