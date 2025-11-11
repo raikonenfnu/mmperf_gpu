@@ -90,6 +90,9 @@ cd ~/ && wget https://gist.githubusercontent.com/raikonenfnu/7d10e109a21a9c337a6
 ```
 
 ```sh
+
+wget https://gist.githubusercontent.com/raikonenfnu/7d10e109a21a9c337a6f71f9f8a6b3eb/raw/1b0e3a6cf3508c7d555b7a9656c65623911ddc19/process_rpd.py
+
 AMD_SERIALIZE_KERNEL=3 TRITON_HIP_ASYNC_COPY_BYPASS_PERMUTE=1 AMDGCN_USE_BUFFER_OPS=1 TRITON_HIP_ASYNC_FAST_SWIZZLE=1 TRITON_HIP_USE_ASYNC_COPY=1 TRITON_HIP_USE_BLOCK_PINGPONG=1 runTracer.sh -o triton.rpd python ~/mmperf_gpu/benchmark_mm_f16.py --shape 1536 3072 19776 --backend triton
 python ~/process_rpd.py triton.rpd
 
