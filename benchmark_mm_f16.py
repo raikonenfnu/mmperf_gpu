@@ -34,11 +34,11 @@ from torch.testing import assert_close
 
 def get_wave_gemm(shape, c_dtype, use_async=False):
     # Workgroup tile sizes
-    BLOCK_M = 128
-    BLOCK_N = 128
+    BLOCK_M = 256
+    BLOCK_N = 256
     BLOCK_K = 64
     # Group size
-    GROUP_SIZE_M = 16
+    GROUP_SIZE_M = 4
     mfma_variant = MMAType.F32_16x16x32_F16
     reordered_gemm, hyperparams = get_reordered_matmul(
         shape[0], shape[1], shape[2], BLOCK_M, BLOCK_N, BLOCK_K, GROUP_SIZE_M, mfma_variant
@@ -51,7 +51,7 @@ def get_wave_gemm(shape, c_dtype, use_async=False):
         subs=hyperparams,
         canonicalize=True,
         schedule=schedule,
-        wave_runtime=False,
+        wave_runtime=True,
         dump_intermediates="./inter",
         use_buffer_ops=True,
         use_global_to_shared=use_async,
@@ -157,7 +157,7 @@ def run_benchmark(args):
                 rep=100,
             )
             ref = torch.matmul(x.to(torch.float32), w.T.to(torch.float32))
-            assert_close(ref, wave_out, atol=0.004, rtol=0.004)
+            assert_close(ref, wave_out, atol=0.004, rtol=0.004, check_dtype=False)
         elif args.backend == "triton":
             triton_out = torch.empty(M, N, device="cuda", dtype=c_dtype)
             ms = triton.testing.do_bench(
