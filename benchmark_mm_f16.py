@@ -71,11 +71,11 @@ def get_wave_gemm(shape, c_dtype, use_async=False):
     gemm = wave_compile(options, reordered_gemm)
     return gemm
 
-def get_hipb_gemm(inp, weights, dtype):
+def get_hipb_gemm(inp, weights, dtype, solution_index):
     return hipb_mm(
         inp,
         weights.t(),
-        solution_index=0,
+        solution_index=solution_index,
         bias=None,
         out_dtype=dtype,
         scaleA=None,
@@ -124,7 +124,7 @@ def run_benchmark(args):
 
     @triton.testing.perf_report([benchmark])
     def bench_gemm_afp4wfp4_blockscale(M, N, K, metric, provider):
-        c_dtype = torch.float16
+        c_dtype = torch.bfloat16
         x = torch.randn((M, K), device="cuda", dtype=c_dtype)
         w = torch.randn((N, K), device="cuda", dtype=c_dtype)
         # flops
@@ -134,6 +134,7 @@ def run_benchmark(args):
         mem_write = (M * N) * 2  # TODO: Fix for c_dtype != bf16
         mem = mem_read + mem_write
         out = torch.empty(x.shape[0], w.shape[1], device=x.device, dtype=c_dtype)
+        hipb_solidx = args.hipb_solidx
 
         if args.backend == "wave":
             wave_shape = (M, N, K)
@@ -168,7 +169,7 @@ def run_benchmark(args):
         elif args.backend == "hipblas":
             hipb_create_extension()
             ms = triton.testing.do_bench(
-                lambda: get_hipb_gemm(x, w, dtype=torch.bfloat16),
+                lambda: get_hipb_gemm(x, w, dtype=torch.bfloat16, solution_index=hipb_solidx),
                 warmup=25,
                 rep=100,
             )
@@ -226,6 +227,12 @@ def parse_args():
         choices=["time", "throughput", "bandwidth"],
         default="throughput",
         help="metric to plot",
+    )
+    parser.add_argument(
+        "--hipb_solidx",
+        type=int,
+        default=0,
+        help="Solution Index to choose which HipblasLT kernel to use",
     )
     parser.add_argument(
         "--backend",
